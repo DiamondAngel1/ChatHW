@@ -39,6 +39,7 @@ while (true)
     {
         Console.WriteLine(responseMessage);
         Console.WriteLine($"Тепер ви можете надсилати повідомлення в чаті");
+        Console.WriteLine("Для того щоб надіслати повідомлення приватно введіть PRIVATE:[ім'я],[повідомлення]");
         Console.WriteLine("Введіть 'exit' для виходу");
         break;
     }

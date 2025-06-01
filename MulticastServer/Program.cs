@@ -19,47 +19,86 @@ while (true){
     var data = server.Receive(ref endPoint);
     string message = Encoding.UTF8.GetString(data);
 
-    if (message.ToLower().StartsWith("exit")){
-        if (clientSubscribe.ContainsKey(endPoint)){
+    if (message.ToLower().StartsWith("exit"))
+    {
+        if (clientSubscribe.ContainsKey(endPoint))
+        {
             string login = clientSubscribe[endPoint].login;
             clientSubscribe.Remove(endPoint);
             Console.WriteLine($"Користувач {login} відключився.");
 
             byte[] disconnectMessage = Encoding.UTF8.GetBytes($"{login} вийшов з чату.");
-            foreach (var client in clientSubscribe.Keys){
-                if (!client.Equals(endPoint)){
-                    try{
+            foreach (var client in clientSubscribe.Keys)
+            {
+                if (!client.Equals(endPoint))
+                {
+                    try
+                    {
                         server.Send(disconnectMessage, disconnectMessage.Length, client);
                     }
-                    catch (Exception ex){
+                    catch (Exception ex)
+                    {
                         Console.WriteLine($"Помилка надсилання повідомлення відключення: {ex.Message}");
                     }
-                } 
+                }
             }
         }
     }
-    else if (clientSubscribe.ContainsKey(endPoint)){
-        if(registeredUsers.ContainsKey(clientSubscribe[endPoint].login)){
+    else if (message.StartsWith("PRIVATE:"))
+    {
+        string[] parts = message.Replace("PRIVATE:", "").Trim().Split(',');
+        if (parts.Length < 2)
+        {
+            continue;
+        }
+        string targetUser = parts[0].Trim();
+        string privateMessage = parts[1].Trim();
+        IPEndPoint? targetClient = clientSubscribe
+            .FirstOrDefault(c => c.Value.login == targetUser).Key;
+        if (targetClient != null)
+        {
+            string senderLogin = clientSubscribe[endPoint].login;
+            string privateMessageToSend = $"{senderLogin} (Приватне): {privateMessage}";
+            byte[] privateDataToSend = Encoding.UTF8.GetBytes(privateMessageToSend);
+            server.Send(privateDataToSend, privateDataToSend.Length, targetClient);
+            Console.WriteLine($"Приватне повідомлення від {senderLogin} для {targetUser}: {privateMessage}");
+        }
+        else
+        {
+            byte[] errorMessage = Encoding.UTF8.GetBytes($"Користувач {targetUser} не знайдений.");
+            server.Send(errorMessage, errorMessage.Length, endPoint);
+
+        }
+    }
+    else if (clientSubscribe.ContainsKey(endPoint))
+    {
+        if (registeredUsers.ContainsKey(clientSubscribe[endPoint].login))
+        {
             string login = clientSubscribe[endPoint].login;
             string messageToSend = $"{login}: {message}";
             Console.WriteLine($"Повідомлення від {login}: {message}");
             byte[] dataToSend = Encoding.UTF8.GetBytes($"{login}: {message}");
-            foreach (var client in clientSubscribe){
-                if (!client.Key.Equals(endPoint)){
+            foreach (var client in clientSubscribe)
+            {
+                if (!client.Key.Equals(endPoint))
+                {
                     server.Send(dataToSend, dataToSend.Length, client.Key);
                 }
             }
         }
     }
-    else if (message.StartsWith("REGISTER:")){
+    else if (message.StartsWith("REGISTER:"))
+    {
         string[] parts = message.Replace("REGISTER:", "").Trim().Split(',');
-        if (parts.Length != 2) {
+        if (parts.Length != 2)
+        {
             continue;
         }
         string login = parts[0].Trim();
         string password = parts[1].Trim();
 
-        if (registeredUsers.ContainsKey(login)){
+        if (registeredUsers.ContainsKey(login))
+        {
             byte[] errorMessage = Encoding.UTF8.GetBytes($"Логін '{login}' вже використовується. Спробуйте інший.");
             server.Send(errorMessage, errorMessage.Length, endPoint);
             continue;
@@ -72,36 +111,44 @@ while (true){
         Console.WriteLine($"Клієнт {endPoint} зареєстрований: {login}");
         byte[] welcomeMessage = Encoding.UTF8.GetBytes($"{login}, вітаємо у чаті!");
         byte[] sendNewUser = Encoding.UTF8.GetBytes($"{login} приєднався до чату.");
-        foreach (var client in clientSubscribe){
-            if (!client.Key.Equals(endPoint)){
+        foreach (var client in clientSubscribe)
+        {
+            if (!client.Key.Equals(endPoint))
+            {
                 server.Send(sendNewUser, sendNewUser.Length, client.Key);
             }
         }
         server.Send(welcomeMessage, welcomeMessage.Length, endPoint);
         continue;
     }
-    else if (message.StartsWith("LOGIN:")){
+    else if (message.StartsWith("LOGIN:"))
+    {
         string[] parts = message.Replace("LOGIN:", "").Split(",");
-        if(parts.Length< 2){
+        if (parts.Length < 2)
+        {
             continue;
         }
         string login = parts[0].Trim();
         string password = parts[1].Trim();
 
-        if (!registeredUsers.ContainsKey(login) || registeredUsers[login]!=password){
+        if (!registeredUsers.ContainsKey(login) || registeredUsers[login] != password)
+        {
             byte[] errorMessage = Encoding.UTF8.GetBytes("Невірний логін або пароль. Спробуйте ще раз.");
             server.Send(errorMessage, errorMessage.Length, endPoint);
             continue;
         }
-        clientSubscribe[endPoint] = (login,password);
+        clientSubscribe[endPoint] = (login, password);
         Console.WriteLine($"Клієнт {endPoint} приєднався: {login}");
         byte[] welcomeMessage = Encoding.UTF8.GetBytes($"{login}, вітаємо у чаті!");
         byte[] sendNewUser = Encoding.UTF8.GetBytes($"{login} приєднався до чату.");
-        foreach (var client in clientSubscribe){
-            if (!client.Key.Equals(endPoint)){
+        foreach (var client in clientSubscribe)
+        {
+            if (!client.Key.Equals(endPoint))
+            {
                 server.Send(sendNewUser, sendNewUser.Length, client.Key);
             }
         }
         server.Send(welcomeMessage, welcomeMessage.Length, endPoint);
     }
+    
 }
