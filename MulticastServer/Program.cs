@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Collections.Generic;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
@@ -13,6 +14,11 @@ Dictionary<IPEndPoint,(string login, string password)> clientSubscribe = new Dic
 Dictionary<string,string> registeredUsers = new Dictionary<string, string>();
 Dictionary<string, (List<IPEndPoint>users, int maxUsers)> chatRooms = new Dictionary<string, (List<IPEndPoint>, int)>();
 Dictionary<IPEndPoint, string> userRoom = new Dictionary<IPEndPoint, string>();
+Dictionary<string, DateTime> bannedUsers = new Dictionary<string, DateTime>();
+List<IPEndPoint> adminList = new List<IPEndPoint>();
+
+string adminLogin = "admin";
+string adminPassword = "admin123";
 
 Console.WriteLine("Сервер запущено. Очікуємо клієнта...");
 
@@ -54,7 +60,52 @@ while (true){
             }
         }
     }
-   
+
+    else if (message.StartsWith("BAN:")){
+        if (!adminList.Contains(endPoint)){
+            continue;
+        }
+        string[] parts = message.Replace("BAN:", "").Trim().Split(',');
+        if (parts.Length < 2){
+            continue;
+        }
+        string userToBan = parts[0].Trim();
+        int banDuration = int.Parse(parts[1].Trim());
+
+        if (!registeredUsers.ContainsKey(userToBan)){
+            byte[] errorMessage = Encoding.UTF8.GetBytes($"Користувач {userToBan} не знайдений");
+            server.Send(errorMessage, errorMessage.Length, endPoint);
+            continue;
+        }
+        bannedUsers[userToBan] = DateTime.Now.AddMinutes(banDuration);
+        byte[] banMessage = Encoding.UTF8.GetBytes($"Користувач {userToBan} заблокований на {banDuration} хвилин.");
+        server.Send(banMessage, banMessage.Length, endPoint);
+    }
+
+    else if (message.StartsWith("DELETE:")){
+        if (!adminList.Contains(endPoint)){
+            continue;
+        }
+        string targetLogin = message.Replace("DELETE:", "").Trim();
+        if (!registeredUsers.ContainsKey(targetLogin)){
+            byte[] errorMessage = Encoding.UTF8.GetBytes($"Користувач {targetLogin} не знайдено");
+            server.Send(errorMessage, errorMessage.Length, endPoint);
+            continue;
+        }
+        IPEndPoint targetEP = null;
+        foreach(var kvp in clientSubscribe){
+            if (kvp.Value.login == targetLogin){
+                targetEP = kvp.Key;
+                break;
+            }
+        }
+        registeredUsers.Remove(targetLogin);
+        clientSubscribe.Remove(targetEP);
+        byte[] successMessage = Encoding.UTF8.GetBytes($"Користувач {targetLogin} видалено");
+        server.Send(successMessage, successMessage.Length, endPoint);
+        Console.WriteLine($"Користувач {targetLogin} видалений адміністратором");
+    }
+
     else if (message.StartsWith("CHOOSE_CHAT:")){
         string chatChoice = message.Replace("CHOOSE_CHAT:", "").Trim();
 
@@ -118,7 +169,7 @@ while (true){
                     continue;
                 }
             }
-            
+
         }
     }
 
@@ -154,38 +205,104 @@ while (true){
     }
 
     else if (message.StartsWith("ROOM_MSG:")){
-        if (!userRoom.ContainsKey(endPoint)){
+        string senderLogin = clientSubscribe.ContainsKey(endPoint) ? clientSubscribe[endPoint].login : null;
+
+        if (senderLogin == null || !registeredUsers.ContainsKey(senderLogin)){
+            byte[] error = Encoding.UTF8.GetBytes("Вас видалено з сервера. Повідомлення не дозволено.");
+            server.Send(error, error.Length, endPoint);
+            continue;
+        }
+
+        if (bannedUsers.ContainsKey(senderLogin)){
+            if (DateTime.Now < bannedUsers[senderLogin]){
+                byte[] banMsg = Encoding.UTF8.GetBytes($"Ви заблоковані до {bannedUsers[senderLogin]}");
+                server.Send(banMsg, banMsg.Length, endPoint);
+                continue;
+            }
+            else{
+                bannedUsers.Remove(senderLogin);
+            }
+        }
+        if (!userRoom.ContainsKey(endPoint)) {
             byte[] errorMessage = Encoding.UTF8.GetBytes("Ви не в кімнаті. Приєднайтесь до кімнати перед надсиланням повідомлень.");
             server.Send(errorMessage, errorMessage.Length, endPoint);
             return;
         }
         string roomName = userRoom[endPoint];
-        string senderLogin = clientSubscribe[endPoint].login;
-
         string roomMessage = message.Replace("ROOM_MSG:", "").Trim();
         byte[] roomMessageData = Encoding.UTF8.GetBytes($"{senderLogin} (Кімната {roomName}): {roomMessage}");
         foreach (var client in chatRooms[roomName].users){
-            if (!client.Equals(endPoint)){
-                server.Send(roomMessageData, roomMessageData.Length, client);
+            if (!clientSubscribe.ContainsKey(client))
+                continue;
+
+            if (!registeredUsers.ContainsKey(senderLogin))
+                continue;
+            
+            if (bannedUsers.ContainsKey(senderLogin)&& DateTime.Now < bannedUsers[senderLogin])
+                continue;
+            
+            server.Send(roomMessageData, roomMessageData.Length, client);
+        }
+        foreach (var admin in clientSubscribe){
+            var client = admin.Key;
+            var user = admin.Value;
+            if (user.login == "admin"){
+                server.Send(roomMessageData,roomMessageData.Length,client);
             }
         }
         Console.WriteLine($"Повідомлення в кімнаті {roomName} від {senderLogin}: {roomMessage}");
     }
 
     else if (clientSubscribe.ContainsKey(endPoint)){
-        if (registeredUsers.ContainsKey(clientSubscribe[endPoint].login)){
-            string login = clientSubscribe[endPoint].login;
+        string login = clientSubscribe[endPoint].login;
+        if (bannedUsers.ContainsKey(login)){
+            if(bannedUsers[login] > DateTime.Now){
+                byte[] errorMessage = Encoding.UTF8.GetBytes($"Ви заблоковані до {bannedUsers[login]}");
+                server.Send(errorMessage, errorMessage.Length, endPoint);
+                continue;
+            }
+            else{
+                bannedUsers.Remove(login);
+                Console.WriteLine($"З користувача {login} знятий бан");
+            }
+        }
+        if (!registeredUsers.ContainsKey(login)){
+            byte[] msg = Encoding.UTF8.GetBytes("Ваш обліковий запис було видалено.");
+            server.Send(msg, msg.Length, endPoint);
 
+            clientSubscribe.Remove(endPoint);
+            Console.WriteLine($"Видалено підключення користувача з видаленим логіном: {login}");
+            continue;
+        }
+        if (registeredUsers.ContainsKey(clientSubscribe[endPoint].login)) {
+            if (bannedUsers.ContainsKey(login)){
+                if (DateTime.Now < bannedUsers[login]){
+                    byte[] errorMessage = Encoding.UTF8.GetBytes($"Ви заблоковані до {bannedUsers[login]}");
+                    server.Send(errorMessage, errorMessage.Length, endPoint);
+                    return;
+                }
+                else{
+                    bannedUsers.Remove(login);
+                }
+            }
             Console.WriteLine($"Повідомлення від {login}: {message}");
             byte[] dataToSend = Encoding.UTF8.GetBytes($"{login}: {message}");
-            foreach (var client in clientSubscribe){
-                if (!client.Key.Equals(endPoint)){
+            foreach (var client in clientSubscribe) {
+                IPEndPoint clientEP = client.Key;
+                if (!registeredUsers.ContainsKey(login))
+                    continue;
+                 if (bannedUsers.ContainsKey(login) && DateTime.Now < bannedUsers[login])
+                     continue;
+                 if (userRoom.ContainsKey(clientEP) && !string.IsNullOrWhiteSpace(userRoom[clientEP]))
+                    continue;
+
+                if (!client.Key.Equals(endPoint)) {
                     server.Send(dataToSend, dataToSend.Length, client.Key);
                 }
             }
         }
     }
-    
+
     else if (message.StartsWith("PRIVATE:")){
         string[] parts = message.Replace("PRIVATE:", "").Trim().Split(',');
         if (parts.Length < 2){
@@ -241,6 +358,24 @@ while (true){
         string login = parts[0].Trim();
         string password = parts[1].Trim();
 
+        if (login == adminLogin && password == adminPassword){
+            Console.WriteLine("Адміністратор на базі");
+
+            byte[] adminMessage = Encoding.UTF8.GetBytes("Вітаємо, ви увійшли як адміністратор");
+            server.Send(adminMessage, adminMessage.Length, endPoint);
+            adminList.Add(endPoint);
+            registeredUsers[adminLogin] = adminPassword;
+        }
+        if (bannedUsers.ContainsKey(login)){
+            if (bannedUsers[login] > DateTime.Now){
+                byte[] errorMessage = Encoding.UTF8.GetBytes($"Ви заблоковані до {bannedUsers[login]}");
+                server.Send(errorMessage, errorMessage.Length, endPoint);
+                return;
+            }
+            else{
+                bannedUsers.Remove(login);
+            }
+        }
         if (!registeredUsers.ContainsKey(login) || registeredUsers[login] != password){
             byte[] errorMessage = Encoding.UTF8.GetBytes("Невірний логін або пароль. Спробуйте ще раз.");
             server.Send(errorMessage, errorMessage.Length, endPoint);
