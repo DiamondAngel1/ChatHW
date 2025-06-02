@@ -14,6 +14,7 @@ Dictionary<IPEndPoint,(string login, string password)> clientSubscribe = new Dic
 Dictionary<string,string> registeredUsers = new Dictionary<string, string>();
 Dictionary<string, (List<IPEndPoint>users, int maxUsers)> chatRooms = new Dictionary<string, (List<IPEndPoint>, int)>();
 Dictionary<IPEndPoint, string> userRoom = new Dictionary<IPEndPoint, string>();
+List<string> forbiddenWords = new List<string> { "привіт", "бу", "капець" };
 Dictionary<string, DateTime> bannedUsers = new Dictionary<string, DateTime>();
 List<IPEndPoint> adminList = new List<IPEndPoint>();
 
@@ -27,6 +28,34 @@ while (true){
     var data = server.Receive(ref endPoint);
     string message = Encoding.UTF8.GetString(data);
 
+    bool hadForbidden = false;
+    string[] words = message.Split(' ');
+    StringBuilder censoredMessageBuilder = new StringBuilder();
+
+    foreach (string w in words){
+        string cleanedWord = w.Trim('.', '!', '?', ';', '(', ')').ToLower();
+
+        if (forbiddenWords.Contains(cleanedWord)){
+            hadForbidden = true;
+            censoredMessageBuilder.Append("### ");
+        }
+        else{
+            censoredMessageBuilder.Append(w + " ");
+        }
+    }
+    string censoredMessage = censoredMessageBuilder.ToString().TrimEnd();
+
+    if (hadForbidden)
+    {
+        string alert = $"Користувач відправив заборонене слово";
+        Console.WriteLine(alert);
+
+        foreach (var adminEP in adminList)
+        {
+            byte[] alertBytes = Encoding.UTF8.GetBytes(alert);
+            server.Send(alertBytes, alertBytes.Length, adminEP);
+        }
+    }
     if (message.ToLower().StartsWith("exit")){
         if (clientSubscribe.ContainsKey(endPoint)){
             string login = clientSubscribe[endPoint].login;
@@ -237,10 +266,10 @@ while (true){
 
             if (!registeredUsers.ContainsKey(senderLogin))
                 continue;
-            
+
             if (bannedUsers.ContainsKey(senderLogin)&& DateTime.Now < bannedUsers[senderLogin])
                 continue;
-            
+
             server.Send(roomMessageData, roomMessageData.Length, client);
         }
         foreach (var admin in clientSubscribe){
@@ -285,19 +314,41 @@ while (true){
                     bannedUsers.Remove(login);
                 }
             }
-            Console.WriteLine($"Повідомлення від {login}: {message}");
-            byte[] dataToSend = Encoding.UTF8.GetBytes($"{login}: {message}");
-            foreach (var client in clientSubscribe) {
-                IPEndPoint clientEP = client.Key;
-                if (!registeredUsers.ContainsKey(login))
-                    continue;
-                 if (bannedUsers.ContainsKey(login) && DateTime.Now < bannedUsers[login])
-                     continue;
-                 if (userRoom.ContainsKey(clientEP) && !string.IsNullOrWhiteSpace(userRoom[clientEP]))
-                    continue;
+            if (hadForbidden==true)
+            {
+                Console.WriteLine($"Повідомлення від {login}: {censoredMessage}");
+                byte[] dataToSend = Encoding.UTF8.GetBytes($"{login}: {censoredMessage}");
+                foreach (var client in clientSubscribe)
+                {
+                    IPEndPoint clientEP = client.Key;
+                    if (!registeredUsers.ContainsKey(login))
+                        continue;
+                    if (bannedUsers.ContainsKey(login) && DateTime.Now < bannedUsers[login])
+                        continue;
+                    if (userRoom.ContainsKey(clientEP) && !string.IsNullOrWhiteSpace(userRoom[clientEP]))
+                        continue;
 
-                if (!client.Key.Equals(endPoint)) {
-                    server.Send(dataToSend, dataToSend.Length, client.Key);
+                    if (!client.Key.Equals(endPoint))
+                    {
+                        server.Send(dataToSend, dataToSend.Length, client.Key);
+                    }
+                }
+            }
+            else
+            {
+                Console.WriteLine($"Повідомлення від {login}: {message}");
+                byte[] dataToSend = Encoding.UTF8.GetBytes($"{login}: {message}");
+                foreach (var client in clientSubscribe) {
+                    IPEndPoint clientEP = client.Key;
+                    if (!registeredUsers.ContainsKey(login))
+                        continue;
+                    if (bannedUsers.ContainsKey(login) && DateTime.Now < bannedUsers[login])
+                        continue;
+                    if (userRoom.ContainsKey(clientEP) && !string.IsNullOrWhiteSpace(userRoom[clientEP]))
+                        continue;
+                    if (!client.Key.Equals(endPoint)) {
+                        server.Send(dataToSend, dataToSend.Length, client.Key);
+                    }
                 }
             }
         }
